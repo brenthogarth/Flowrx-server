@@ -14,13 +14,11 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Database
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// Initialize tables on startup
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clients (
@@ -48,11 +46,9 @@ async function initDB() {
 }
 initDB();
 
-// Twilio + Anthropic clients
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Send SMS helper
 async function sendSMS(to, body) {
   await twilioClient.messages.create({
     body,
@@ -65,7 +61,6 @@ async function sendSMS(to, body) {
   );
 }
 
-// Onboarding questions
 const ONBOARDING = [
   `Welcome to Flow RX — Create Change that Lasts Forever.\n\nI'm your personal performance coach, built by Dr. Brent Hogarth.\n\nFirst question: What is your name?`,
   `Great to meet you, {name}.\n\nEvery high performer operates from a personal philosophy — a core belief that guides how they live.\n\nWhat is yours? (Example: "Be present. Be relentless.")`,
@@ -77,7 +72,6 @@ const ONBOARDING = [
 
 const ONBOARDING_KEYS = ['name', 'philosophy', 'vision', 'purpose', 'practice', 'nudge_time'];
 
-// Onboarding confirmation message
 function confirmationMessage(client) {
   let scheduleText = '';
   try {
@@ -89,12 +83,10 @@ function confirmationMessage(client) {
   return `You're set, ${client.name}.\n\nHere's your foundation:\n📌 Philosophy: ${client.philosophy}\n🎯 Vision: ${client.vision}\n🔥 Purpose: ${client.purpose}\n⚡ Practice: ${client.practice}\n\n${scheduleText}\n\nYour first nudge arrives tomorrow. Let's build something that lasts.`;
 }
 
-// AI coaching reply
 async function getCoachingReply(message, client) {
   const context = client.onboarded
     ? `Client name: ${client.name}. Philosophy: "${client.philosophy}". Vision: "${client.vision}". Purpose: "${client.purpose}". Current practice: "${client.practice}".`
     : '';
-
   const res = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 150,
@@ -105,16 +97,14 @@ Draw from: ADHD 2.0 (Ferrari brain, Vitamin Connect, right difficult, cerebellum
 Never give generic advice. Always anchor to the client's own philosophy and vision when available.`,
     messages: [{ role: 'user', content: message }]
   });
-
   return res.content[0].text;
 }
 
-// Parse nudge schedule from client's free-text answer
 async function parseNudgeSchedule(practiceText, nudgeTimeText) {
   const res = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 200,
-    system: `Extract practice/time pairs from a client's nudge schedule answer. 
+    system: `Extract practice/time pairs from a client's nudge schedule answer.
 Return ONLY a JSON array. Each item has "practice" and "time" (24hr format HH:MM, Pacific time).
 Example: [{"practice":"morning mindset","time":"08:00"},{"practice":"deep work","time":"12:00"}]
 If only one time is given, use the practice from their practice answer.
@@ -129,10 +119,8 @@ No markdown, no explanation, just the JSON array.`,
   }
 }
 
-// Health check
 app.get('/', (req, res) => res.send('Flow RX server is running'));
 
-// Send nudge (from dashboard)
 app.post('/send', async (req, res) => {
   const { to, message } = req.body;
   try {
@@ -143,18 +131,15 @@ app.post('/send', async (req, res) => {
   }
 });
 
-// Incoming SMS handler
 app.post('/incoming', async (req, res) => {
   const from = req.body.From;
   const body = req.body.Body?.trim();
 
-  // Log inbound
   await pool.query(
     'INSERT INTO messages (phone, direction, body) VALUES ($1, $2, $3)',
     [from, 'inbound', body]
   );
 
-  // Get or create client
   let result = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
   let client = result.rows[0];
 
@@ -167,18 +152,15 @@ app.post('/incoming', async (req, res) => {
   res.set('Content-Type', 'text/xml');
   res.send('<Response></Response>');
 
-  // Onboarding flow
   if (!client.onboarded) {
     const step = client.onboarding_step;
 
     if (step < ONBOARDING_KEYS.length) {
-      // Save the answer to the previous step
       if (step > 0) {
         const key = ONBOARDING_KEYS[step - 1];
         await pool.query(`UPDATE clients SET ${key} = $1 WHERE phone = $2`, [body, from]);
       }
 
-      // Send next question (personalize step 1 with name if available)
       let question = ONBOARDING[step];
       if (step === 1) {
         const updated = await pool.query('SELECT name FROM clients WHERE phone = $1', [from]);
@@ -189,14 +171,9 @@ app.post('/incoming', async (req, res) => {
       await sendSMS(from, question);
 
     } else {
-      // Save raw nudge time answer
-      await pool.query('UPDATE clients SET nudge_time = $1 WHERE phone = $2', [body, from]);
-
-      // Fetch full client data
       const raw = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
       const r = raw.rows[0];
 
-      // Condense answers with AI — preserve good answers, only clean up rambling ones
       const condenseRes = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 300,
@@ -220,11 +197,9 @@ Rules:
         condensed = { philosophy: r.philosophy, vision: r.vision, purpose: r.purpose, practice: r.practice };
       }
 
-      // Parse nudge schedule into structured JSON
       const schedule = await parseNudgeSchedule(condensed.practice, body);
       const scheduleJSON = JSON.stringify(schedule);
 
-      // Save everything cleaned and finalized
       await pool.query(
         'UPDATE clients SET philosophy = $1, vision = $2, purpose = $3, practice = $4, nudge_time = $5, onboarded = TRUE WHERE phone = $6',
         [condensed.philosophy, condensed.vision, condensed.purpose, condensed.practice, scheduleJSON, from]
@@ -235,19 +210,16 @@ Rules:
     }
 
   } else {
-    // Fully onboarded — AI coaching reply
     const reply = await getCoachingReply(body, client);
     await sendSMS(from, reply);
   }
 });
 
-// Get all clients (for dashboard)
 app.get('/clients', async (req, res) => {
   const result = await pool.query('SELECT * FROM clients ORDER BY created_at DESC');
   res.json(result.rows);
 });
 
-// Get messages for a client (for dashboard)
 app.get('/messages/:phone', async (req, res) => {
   const result = await pool.query(
     'SELECT * FROM messages WHERE phone = $1 ORDER BY created_at ASC',
@@ -256,9 +228,10 @@ app.get('/messages/:phone', async (req, res) => {
   res.json(result.rows);
 });
 
-// Get nudge schedules (for cron — returns all onboarded clients with their schedule)
 app.get('/schedules', async (req, res) => {
-  const result = await pool.query('SELECT phone, name, philosophy, vision, purpose, practice, nudge_time FROM clients WHERE onboarded = TRUE');
+  const result = await pool.query(
+    'SELECT phone, name, philosophy, vision, purpose, practice, nudge_time FROM clients WHERE onboarded = TRUE'
+  );
   res.json(result.rows);
 });
 
