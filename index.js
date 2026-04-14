@@ -162,11 +162,42 @@ app.post('/incoming', async (req, res) => {
       await sendSMS(from, question);
 
     } else {
-      // Save final answer (nudge_time)
-      await pool.query('UPDATE clients SET nudge_time = $1, onboarded = TRUE WHERE phone = $2', [body, from]);
+    // Save final answer (nudge_time)
+    await pool.query('UPDATE clients SET nudge_time = $1 WHERE phone = $2', [body, from]);
 
-      const updated = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
-      await sendSMS(from, confirmationMessage(updated.rows[0]));
+    // Condense answers with AI before finalizing
+    const raw = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+    const r = raw.rows[0];
+
+    const condenseRes = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      system: system: `You are a performance coach reviewing client onboarding answers.
+Your job is to preserve great answers exactly as written, and only condense answers that are rambling, unclear, or overly long.
+
+Rules:
+- If an answer is already clear, punchy, and under 2 sentences — keep it word for word.
+- Only rewrite if the answer is rambling, repetitive, or longer than 2-3 sentences.
+- Never add words, reframe meaning, or make it sound different if it doesn't need it.
+- First person only. No markdown. No asterisks.
+- Return ONLY a JSON object with keys: philosophy, vision, purpose, practice.`,
+
+    let condensed;
+    try {
+      const text = condenseRes.content[0].text.replace(/```json|```/g, '').trim();
+      condensed = JSON.parse(text);
+    } catch(e) {
+      condensed = { philosophy: r.philosophy, vision: r.vision, purpose: r.purpose, practice: r.practice };
+    }
+
+    await pool.query(
+      'UPDATE clients SET philosophy = $1, vision = $2, purpose = $3, practice = $4, onboarded = TRUE WHERE phone = $5',
+      [condensed.philosophy, condensed.vision, condensed.purpose, condensed.practice, from]
+    );
+
+    const updated = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+    await sendSMS(from, confirmationMessage(updated.rows[0]));
+  }
     }
 
   } else {
