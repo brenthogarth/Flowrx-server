@@ -62,7 +62,7 @@ async function sendSMS(to, body) {
 }
 
 const ONBOARDING = [
-  `Welcome to Flow RX — Create Change that Lasts Forever.\n\nI'm your personal performance coach, built by Dr. Brent Hogarth.\n\nFirst question: What is your name?`,
+  `Welcome to Flow RX — Together, Let's Create Change that Lasts Forever.\n\nI'm your personal performance coach, built by Dr. Brent Hogarth.\n\nFirst question: What is your name?`,
   `Great to meet you, {name}.\n\nEvery high performer operates from a personal philosophy — a core belief that guides how they live.\n\nWhat is yours? (Example: "Be present. Be relentless.")`,
   `Powerful.\n\nNow imagine everything went right. Your career, your health, your relationships — all of it.\n\nDescribe your vision. What does that life look like?`,
   `That's worth building toward.\n\nOne more: Why does it matter? What is your deeper purpose — the reason you keep going even when it's hard?`,
@@ -196,7 +196,7 @@ ${KNOWLEDGE_BASE}
 ${clientContext}
 
 COACHING RULES:
-- Reply in 1-3 sentences max. Never longer.
+- Reply in 1-2 sentences max. Warm, direct, non-clinical. If the client explicitly asks for more detail or wants to go deeper, you may expand to 3-4 sentences.
 - Plain text only — no markdown, no asterisks, no bullet points, no formatting of any kind.
 - Always anchor to the client's own philosophy, vision, and purpose when available.
 - Coach from strength — frame challenges as growth edges, never deficits.
