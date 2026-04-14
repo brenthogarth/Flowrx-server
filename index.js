@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const Anthropic = require('@anthropic-ai/sdk');
 const twilio = require('twilio');
+const cron = require('node-cron');
 
 const app = express();
 app.use((req, res, next) => {
@@ -41,6 +42,13 @@ async function initDB() {
       body TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS nudge_log (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      practice TEXT,
+      body TEXT,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
   console.log('Database ready');
 }
@@ -62,7 +70,7 @@ async function sendSMS(to, body) {
 }
 
 const ONBOARDING = [
-  `Welcome to Flow RX — Together, Let's Create Change that Lasts Forever.\n\nI'm your personal performance coach, built by Dr. Brent Hogarth.\n\nFirst question: What is your name?`,
+  `Welcome to Flow RX — Create Change that Lasts Forever.\n\nI'm your personal performance coach, built by Dr. Brent Hogarth.\n\nFirst question: What is your name?`,
   `Great to meet you, {name}.\n\nEvery high performer operates from a personal philosophy — a core belief that guides how they live.\n\nWhat is yours? (Example: "Be present. Be relentless.")`,
   `Powerful.\n\nNow imagine everything went right. Your career, your health, your relationships — all of it.\n\nDescribe your vision. What does that life look like?`,
   `That's worth building toward.\n\nOne more: Why does it matter? What is your deeper purpose — the reason you keep going even when it's hard?`,
@@ -85,100 +93,234 @@ function confirmationMessage(client) {
 
 const KNOWLEDGE_BASE = `
 # FLOW RX COACHING KNOWLEDGE BASE
+# Dr. Brent Hogarth's Complete Clinical and Performance Coaching Framework
+
+---
 
 ## DOMAIN 1: THE ADHD BRAIN — A HIGH PERFORMANCE FRAMEWORK
 
-The ADHD brain is not broken. It is a high-powered, pattern-seeking, novelty-driven nervous system. The goal is never to fix it — it is to leverage it. The Ferrari brain metaphor captures the truth: extraordinary power, requires skilled driving.
+The ADHD brain is not broken. It is a high-powered, pattern-seeking, novelty-driven nervous system. The goal is never to fix it — it is to leverage it. The Ferrari brain metaphor (Hallowell & Ratey) captures the truth: extraordinary power, requires skilled driving.
 
-ADHD is fundamentally a dopamine regulation challenge. The brain's reward circuitry underproduces dopamine, leading to difficulty sustaining attention on low-stimulation tasks, impulsivity, and emotional dysregulation. The prescription is building a life architecture that delivers consistent, healthy dopamine through meaningful work, movement, connection, and mastery.
+ADHD is best understood as a difference in how the brain regulates attention, impulse control, and executive functioning — not a deficit but a different operating system that requires skilled management.
 
-The Default Mode Network (DMN) stays active in ADHD brains even during task engagement — creating distraction from within. Mindfulness training directly strengthens the ability to notice DMN activation and return to the Task Positive Network (TPN). The cerebellum plays a significant role in attention and cognitive sequencing — physical exercise directly improves cerebellar function and ADHD symptoms.
+THE TWO KEY BRAIN NETWORKS:
+Task-Positive Network (TPN) — the "angel": active when focused, engaged, working toward a goal. Helps with deep concentration, problem-solving, structured tasks.
+Default Mode Network (DMN) — the "demon": takes over when the brain is not engaged, leading to wandering thoughts, distraction, overthinking, and self-doubt. In ADHD, the brain struggles to switch smoothly between these networks — frequent shifts from focus to distraction are the result.
 
-VAST (Variable Attention Stimulus Trait) captures the spectrum nature: variable attention that can hyperfocus on high-interest tasks. Stop fighting variable attention — design work environments that match the brain's natural engagement patterns.
+NEUROCHEMISTRY: ADHD is linked to low dopamine and norepinephrine levels. Dopamine — the reward chemical — helps the brain stay engaged by reinforcing effort and motivation. When dopamine is inconsistent, mundane tasks feel impossible. Norepinephrine drives alertness and sustained effort. This explains why ADHD brains can hyperfocus in high-stakes or exciting situations but struggle with routine. Every intervention in Dr. Brent's protocol works by stabilizing and boosting these neurochemicals naturally.
 
-The ADHD brain thrives with: simplicity, mindfulness, novelty, urgency, meaning, and movement.
+THE CEREBELLUM CONNECTION: The cerebellum plays a significant role in attention, timing, and cognitive sequencing — not just movement. Balance training, coordination exercises, and aerobic movement directly improve cerebellar function and ADHD symptoms. Exercise is neurological medicine, not optional.
 
-## DOMAIN 2: DR. BRENT'S EVIDENCE-BASED PROTOCOL
+VAST (Variable Attention Stimulus Trait): Hallowell and Ratey's reframe — variable attention that hyperfocuses on high-interest tasks and disengages from low-interest ones. Stop fighting variable attention. Design environments that match the brain's natural engagement patterns.
 
-MORNING MINDSET ROUTINE: The first 20-30 minutes set the neurological tone for the day. Cortisol peaks naturally in the first hour (cortisol awakening response) — the brain's natural activation window. The routine: one breath (arrive in the present), one gratitude (activates reward circuitry, shifts from threat to drive mode), one intention (connects to philosophy and vision), be where your feet are (presence anchor).
+THE ADHD BRAIN THRIVES WITH: simplicity, mindfulness, novelty, urgency, meaning, movement, and connection.
 
-10 DEEP BREATHS 3 TIMES PER DAY: Slow exhale-extended breathing at 4-6 cycles per minute activates the parasympathetic nervous system via the vagus nerve. For ADHD brains running on adrenaline, three intentional breath resets per day recalibrate the nervous system and prevent cumulative stress load. Box breathing and extended exhale breathing reduce amygdala reactivity.
+---
 
-DEEP WORK BLOCKS USING POMODORO: Sustained uninterrupted cognitive work is the highest-value activity for knowledge workers. The Pomodoro Method (25-minute focused blocks, 5-minute breaks) matches the ADHD brain's natural attention cycle. Task-switching costs reduce cognitive performance by up to 40%. Distraction recovery takes an average of 23 minutes. Key requirement: phone in another room — physical distance reduces cognitive load from temptation.
+## DOMAIN 2: DR. BRENT'S CLINICAL TREATMENT PROTOCOL
 
-MINDFULNESS TRAINING: One of the most rigorously researched interventions for ADHD. Strengthens prefrontal cortex regulation of the DMN. Builds metacognitive awareness — the ability to notice your own mental states. Start with 5 minutes of breath awareness. When the mind wanders, notice without judgment and return — the noticing IS the practice.
+This is the complete evidence-based protocol Dr. Brent uses with ADHD and performance clients. Every intervention has a neurobiological rationale.
 
-EXERCISE: The single most evidence-based non-pharmaceutical intervention for ADHD. Aerobic exercise increases BDNF (brain-derived neurotrophic factor) — fertilizer for brain cells — producing immediate improvements in attention, working memory, and executive function lasting 60-90 minutes post-exercise. A 20-minute run before deep work is more effective than most focus strategies.
+### SECURITY LAYER — Building the Foundation
 
-HIGH QUALITY SLEEP: Sleep restores dopamine receptor sensitivity. Poor sleep dramatically worsens all ADHD symptoms. Morning sunlight within 1 hour of waking sets circadian rhythm. NSDR (Non-Sleep Deep Rest) — 10-20 minute yoga nidra — restores dopamine baseline mid-day. No caffeine after 12-1 PM.
+MORNING MINDSET ROUTINE (Daily — non-negotiable):
+The first moments of the day set the neurological tone for everything that follows. The cortisol awakening response peaks in the first hour — this is the brain's natural activation window. Use it intentionally.
+Step 1: One deep breath — arrive in the present moment, activate the parasympathetic nervous system
+Step 2: One thought of gratitude — activates reward circuitry, shifts from threat (adrenaline) to drive (dopamine) mode
+Step 3: Set one intention for the day — connects action to guiding philosophy and vision
+Step 4: Feel your feet on the ground when you stand up — presence anchor, be where your feet are
+This routine requires under 2 minutes and is the highest-leverage habit in the entire protocol.
 
-VITAMIN CONNECT: Social connection is neurologically protective. Oxytocin from positive social interaction reduces cortisol and improves emotional regulation. For ADHD brains prone to shame and isolation, connection is medicine. The social brain network and DMN are nearly identical — human brains at rest are thinking about other people.
+TRAIN CALM — 10 Deep Breaths, 3 Times Per Day:
+Slow exhale-extended breathing at 4-6 cycles per minute activates the parasympathetic nervous system via the vagus nerve, reducing cortisol and shifting from sympathetic (threat/adrenaline) to parasympathetic (restore/dopamine) dominance. Three daily breath resets prevent cumulative stress load and overwhelm.
+Morning: low-stress moments (waking, after meditation) — build the baseline
+Afternoon: medium-stress situations (challenging work tasks) — regulate mid-day
+Evening: before high-stress environments — de-escalate and recover
+This structured approach trains the body to access calm on demand across all stress levels. Supported by Yerkes-Dodson theory: optimal performance occurs at moderate arousal. Deep breathing modulates arousal to keep performance in the optimal zone.
 
-PHILOSOPHY/VISION/PURPOSE: Identity-based motivation is the most powerful ADHD intervention. When behavior is connected to who you are, where you're going, and why it matters, the brain's interest-based attention system activates intrinsic motivation rather than relying on adrenaline. Nir Eyal (Indistractable): distraction is not a time management problem, it is a values alignment problem. When actions align with identity, distraction weakens.
+SELF-COMPASSION PRACTICE (Daily):
+Self-compassion is not self-indulgence — it is the shift from running on adrenaline (threat/self-criticism) to running on dopamine (drive/meaning). Research shows self-compassion increases resilience, emotional regulation, and performance standards.
+The Self-Compassion Break (Kristin Neff):
+Step 1: Acknowledge the difficulty — name what is hard without judgment ("This is a moment of suffering")
+Step 2: Recognize shared humanity — "Many people feel this way. I am not alone in this."
+Step 3: Offer self-kindness — hand on heart, speak words of support to yourself: "I'm doing my best. I know I can navigate this."
+ADHD adults carry disproportionate shame from years of being told they are lazy or irresponsible. This practice directly interrupts the shame-threat-adrenaline cycle. Use it whenever the inner critic appears.
+
+SLEEP OPTIMIZATION (The Foundation of Recovery):
+Sleep restores dopamine receptor sensitivity. Poor sleep dramatically worsens every ADHD symptom. Sleep is not a lifestyle choice — it is a performance intervention.
+
+Morning routine (first 1-3 hours):
+- Morning sunlight exposure within 30-60 minutes of waking: 10 min clear days, 20 min cloudy, 30-60 min overcast. Sets circadian rhythm, anchors sleep/wake cycle.
+- Cold exposure or morning exercise: 1-3 min cold shower or brisk walk. Boosts dopamine, combats morning lethargy.
+- Delay caffeine 90-120 minutes after waking — prevents afternoon crashes.
+- Consistent wake time every day including weekends — stabilizes circadian rhythm.
+
+Afternoon/evening:
+- Naps under 30 minutes only.
+- Afternoon sunlight exposure supports circadian stability.
+- No intense exercise in the evening — light yoga or stretching only.
+- Dim lights after 6 PM, reduce screen exposure, use warm low-angle lighting.
+- Cool room temperature for sleep.
+- NSDR (Non-Sleep Deep Rest): 10-20 minute yoga nidra protocol mid-day restores dopamine baseline. Also use if waking during the night.
+- No caffeine after 12-1 PM.
+
+HIGH QUALITY CONNECTIONS — Vitamin Connect:
+Human connection is neurologically protective. Oxytocin from positive social interaction reduces cortisol, increases trust, and improves emotional regulation. The social brain network and the DMN are nearly identical — human brains at rest are thinking about other people. Connection is not a luxury — it is medicine.
+Weekly target: 100-120 minutes of meaningful time with family or close friends.
+
+### GROWTH LAYER — Building High Performance
+
+DEEP WORK BLOCKS — 90-120 Minutes of Uninterrupted Concentration:
+Sustained, distraction-free cognitive work is the highest-value activity for knowledge workers and the hardest for ADHD brains to access. Cal Newport's research: deep work is rare, valuable, and trainable.
+Use the Eisenhower Decision Matrix to identify the highest-priority task before starting.
+Use Pomodoro time-blocking: 25-minute focused blocks, 5-minute breaks. Extend to 50-90 minutes as attentional stamina grows.
+Phone in another room — not just silenced. Physical distance reduces cognitive load from temptation.
+Task-switching costs reduce cognitive performance by up to 40%. Distraction recovery takes 23 minutes on average. Protecting deep work time is protecting peak performance.
+End of each workday: 5 minutes to identify and eliminate distractions for tomorrow. 5 minutes to set clear, specific goals for the next day.
+
+MINDFULNESS TRAINING (20 Minutes Daily):
+Mindfulness is one of the most rigorously researched interventions for ADHD. It strengthens prefrontal cortex regulation of the DMN and builds metacognitive awareness — the ability to notice your own mental states.
+Practices (introduce gradually):
+- Mindful eating: one meal a day, fully present with each bite. Ground yourself in the moment.
+- Body scan meditation: move attention through different parts of the body to develop relaxation and awareness.
+- Sitting meditation: observe thoughts without judgment, anchor to breath.
+- Mindful movement: gentle yoga or stretching aligned with breath and awareness.
+- Walking meditation: slow down, pay attention to each step and sensation.
+- Loving-kindness meditation: build compassion toward self and others.
+The practice is simple: place attention on one thing, notice when the mind wanders, return without judgment. The noticing and returning IS the training. Every rep builds the neural circuitry of directed focus.
+
+EXERCISE (60 Minutes, 3 Times Per Week):
+The single most evidence-based non-pharmaceutical intervention for ADHD. Aerobic exercise increases BDNF (brain-derived neurotrophic factor) — fertilizer for brain cells — producing immediate improvements in attention, working memory, and executive function lasting 60-90 minutes post-exercise.
+Weightlifting + cardio combination is optimal.
+20-40 minutes active recovery 3 times per week: light yoga, stretching, sauna.
+Coordination and balance-based movement (sport, martial arts, yoga) activates the cerebellum directly.
+A 20-minute run before deep work is more effective than most focus strategies.
+Weekly target: 2-6 hours of high-flow activities (sport, creative projects, hobbies that reliably produce flow state).
+
+SELF-DISCOVERY — Building a Grounded Internal Compass:
+Personal Philosophy: the core principle that guides decisions. Revisit it regularly. Let it be the anchor when everything else is uncertain.
+Massive Transformative Purpose (MTP): a highly aspirational overarching goal — solving a significant problem in your family, community, field, or world. Purpose activates the brain's interest-based attention system and makes distraction irrelevant.
+Define High Performance personally: is it about process or outcome? Being your best, or the best? Clarity here prevents the comparison trap.
+Craft a Vision: not what is probable but what is possible. This is the north star that makes daily practices meaningful.
+
+THREE GOOD THINGS (Daily — Evening):
+At the end of each day, write down three things that went well and why they were meaningful. Trains the brain to scan for evidence of competence and progress rather than defaulting to threat detection. Directly counters the negativity bias amplified in ADHD brains. Supported by Seligman's positive psychology research.
+
+LOAD PATTERN RECOGNITION (25 Minutes Daily):
+Reading, learning something new, engaging with ideas outside your expertise. Stimulates creativity and problem-solving. Feeds the ADHD brain's hunger for novelty and builds the associative thinking that drives innovation.
+
+WEEKLY REFLECTION (30-60 Minutes):
+Reflect on deep work productivity. Seek feedback from trusted people. This closes the feedback loop that makes practice compound over time.
+
+---
 
 ## DOMAIN 3: FLOW STATE SCIENCE AND TRAINING
 
-Flow is complete absorption in a challenging, meaningful task — self-consciousness dissolves, time distorts, performance peaks. Neuroscience: transient hypofrontality — prefrontal cortex quiets, eliminating self-criticism and overthinking, while pattern recognition and creativity amplify. Flow releases dopamine, norepinephrine, anandamide, serotonin, and endorphins simultaneously — the most neurochemically rich performance state available.
+Flow is complete absorption in a challenging, meaningful task — self-consciousness dissolves, time distorts, performance peaks. Neuroscience (Steven Kotler, Rian Dorris, Flow Research Collective): transient hypofrontality quiets the prefrontal cortex, eliminating self-criticism and overthinking while massively amplifying pattern recognition and creativity. Flow releases dopamine, norepinephrine, anandamide, serotonin, and endorphins simultaneously — the most neurochemically rich performance state available.
 
-For ADHD brains: in flow, the DMN quiets fully. ADHD brains can achieve extraordinary hyperfocus in flow — more dramatic than neurotypical flow experience. The coaching goal: engineer triggers so flow becomes accessible on demand.
+For ADHD brains: in flow, the DMN quiets fully. ADHD brains can achieve extraordinary hyperfocus in flow — more dramatic than neurotypical experience. The coaching goal: engineer triggers so flow becomes accessible on demand.
 
-FLOW TRIGGERS (Kotler & Dorris, Flow Research Collective):
-- Clear goals: knowing exactly what you're doing eliminates cognitive overhead blocking flow entry
-- Immediate feedback: real-time performance information sustains engagement
-- Challenge/skill balance: task difficulty at 4% above current skill level — the productive discomfort zone
-- Deep embodiment: full sensory engagement reduces DMN activation
-- Rich environments: novel, complex settings stimulate dopamine
-- High consequence: real stakes accelerate flow entry
+FLOW TRIGGERS (Kotler & Dorris):
+Clear goals: know exactly what you are doing and why — eliminates cognitive overhead blocking flow entry
+Immediate feedback: real-time performance information sustains engagement
+Challenge/skill balance: task difficulty at 4% above current skill level — productive discomfort zone
+Deep embodiment: full sensory engagement reduces DMN activation
+Rich environments: novel, complex, unpredictable settings stimulate dopamine
+High consequence: real stakes accelerate flow entry
 
-HIGH FLOW ENVIRONMENT DESIGN: Eliminate decision overhead (same morning routine, pre-set work blocks, single priority per session). Write one sentence before each deep work block: "I am working on X until Y time." Track output in real time for immediate feedback. Protect the recovery window — 20-minute NSDR post-flow accelerates recovery.
+HIGH FLOW ENVIRONMENT DESIGN:
+Eliminate decision overhead — same morning routine, pre-set work blocks, single priority per session
+Write one sentence before each deep work block: "I am working on X until Y time"
+Track output in real time for immediate feedback
+Protect recovery: 20-minute NSDR post-flow accelerates neurochemical restoration
+Weekly: 2-6 hours of high-flow activities that reliably produce the state
 
-THE FLOW CYCLE (Kotler): Struggle (load the problem, tolerate frustration) → Release (step back, let unconscious process) → Flow (peak state, do not interrupt) → Recovery (neurochemical restoration, essential for next cycle). Most people force flow during struggle or skip recovery — both sabotage the cycle.
+THE FLOW CYCLE (Kotler):
+Struggle (load the problem, tolerate frustration) → Release (step back, walk, rest — let the unconscious process) → Flow (peak state — do not interrupt it) → Recovery (essential neurochemical restoration for the next cycle)
+Most people force flow during struggle or skip recovery. Both sabotage the cycle. Coaching clients to respect the full cycle — especially recovery — is one of the highest-leverage interventions.
+
+---
 
 ## DOMAIN 4: COMPASSION AS A PERFORMANCE SKILL
 
-Self-criticism activates the threat system — amygdala-driven fight-or-flight. Cortisol and adrenaline flood the system. Short term this works; long term it produces burnout, anxiety, and degraded working memory.
+Self-criticism activates the threat system — amygdala-driven fight-or-flight, cortisol and adrenaline. Short term it can drive performance. Long term: burnout, anxiety, degraded working memory, emotional dysregulation.
 
-PAUL GILBERT'S THREE CIRCLE MODEL: Threat system (red) — protection, fight/flight, driven by adrenaline/cortisol. Drive system (blue) — seeking, achieving, driven by dopamine. Soothe system (green) — rest, connection, driven by oxytocin/serotonin. Most high performers use threat to activate drive. Self-compassion builds the soothe system, which makes the drive system more sustainable. When the soothe system is strong, you recover from failure faster, take bigger risks, and sustain effort longer.
+PAUL GILBERT'S THREE CIRCLE MODEL (Compassion Focused Therapy):
+Threat system (red): protection, fight/flight/freeze, driven by adrenaline and cortisol
+Drive system (blue): seeking, achieving, acquiring, driven by dopamine
+Soothe system (green): rest, connection, contentment, driven by oxytocin and serotonin
+Most high performers with ADHD use threat (self-criticism, fear of failure) to activate drive (achievement). This works until it doesn't — and the crash is hard. Self-compassion builds the soothe system, which makes the drive system sustainable. Strong soothe system = faster recovery from failure, bigger risk-taking, longer sustained effort.
 
-KRISTIN NEFF'S THREE COMPONENTS: Self-kindness (treat yourself as you would a good friend who is struggling). Common humanity (suffering and failure are part of shared human experience — you are not uniquely broken). Mindfulness (hold painful thoughts in balanced awareness — neither suppress nor amplify). Self-compassion is positively correlated with motivation, resilience, and higher standards — not lower ones. Self-compassionate people hold themselves to higher standards because they are not terrified of their own self-judgment.
+KRISTIN NEFF'S THREE COMPONENTS:
+Self-kindness: treat yourself with the warmth you would offer a good friend who is struggling — not harsh self-judgment
+Common humanity: suffering, failure, and imperfection are part of shared human experience — you are not uniquely broken
+Mindfulness: hold painful thoughts in balanced awareness — neither suppress nor amplify
+Self-compassionate people hold themselves to HIGHER standards because they are not terrified of their own self-judgment. They recover faster and are more willing to acknowledge mistakes.
 
-THE KEY REFRAME: Self-compassion is not self-indulgence. It is the shift from running on adrenaline (threat/self-criticism) to running on dopamine (drive/meaning). It breaks the overwhelm cycle. ADHD adults carry disproportionate shame — thousands of experiences of being called lazy or irresponsible. Chronic shame activates the threat system chronically. Self-compassion directly interrupts this cycle.
+THE KEY REFRAME FOR HIGH PERFORMERS: Self-compassion is not lowering your standards. It is shifting your fuel source — from adrenaline (threat/criticism) to dopamine (drive/meaning). It breaks the overwhelm cycle that traps ADHD adults.
 
-SELF-COMPASSION BREAK (Dr. Brent's protocol): 1. Acknowledge — "This is a moment of suffering" (names pain, reduces amygdala reactivity). 2. Common humanity — "I am not alone in this." 3. Kindness — hand on heart, "May I be kind to myself in this moment." This 60-second practice physiologically shifts the nervous system from threat to soothe.
+IDENTITY-BASED CHANGE (Nir Eyal, James Clear):
+We act in accordance with how we see ourselves. The most powerful behavior change is identity change — shifting from "I struggle with focus" to "I am someone who trains my attention." Every action is a vote for the type of person you believe you are. Never reinforce deficit identity. Always coach from the client's best self — their philosophy and vision.
 
-IDENTITY-BASED CHANGE (Nir Eyal, James Clear): We act in accordance with how we see ourselves. The most powerful behavior change is identity change. Every action is a vote for the type of person you believe you are. Never reinforce deficit identity — always coach from the client's best self.
+---
 
 ## DOMAIN 5: HUMANISTIC PSYCHOLOGY AND SELF-ACTUALIZATION
 
-SCOTT BARRY KAUFMAN — TRANSCEND: Replaces Maslow's pyramid with a sailboat — the hull provides security (safety, connection, self-esteem), the sail catches the wind of growth (exploration, love, purpose, transcendence). You need a sturdy hull to sail — but the goal is always to sail. Flow states are peak experiences. Building a life that reliably generates flow, connection, and meaning is the operational definition of self-actualization.
+SCOTT BARRY KAUFMAN — TRANSCEND (The New Science of Self-Actualization):
+Replaces Maslow's rigid pyramid with a sailboat — the hull provides security (safety, connection, self-esteem), the sail catches the wind of growth (exploration, love, purpose, transcendence). You need a sturdy hull to sail — but the goal is always to sail.
+Self-actualizing people: continued freshness of appreciation, peak experiences, deep identification with humanity, philosophical acceptance of uncertainty, creative living.
+Flow states ARE peak experiences. Building a life that reliably generates flow, connection, and meaning is the operational definition of self-actualization.
 
-When basic needs for safety, connection, and self-esteem are genuinely met, the drive toward growth and contribution emerges naturally. Compassion (meeting the need for self-acceptance) and connection (meeting the need for belonging) are not soft skills — they are performance prerequisites.
+FULFILLING DEEPEST NEEDS UNLOCKS FULL POTENTIAL:
+When basic needs for safety, connection, and self-esteem are genuinely met — not suppressed or bypassed — the drive toward growth and contribution emerges naturally. Compassion (meeting the need for self-acceptance) and connection (meeting the need for belonging) are not soft skills — they are performance prerequisites. This is why the security layer of Dr. Brent's protocol (self-compassion, sleep, connection) must be built before the growth layer (deep work, flow, mastery).
 
-VIKTOR FRANKL — MEANING AS PRIMARY MOTIVATION: People can endure almost any circumstance if they have a reason why. Flow RX coaching is meaning-making work. Every nudge, every framework is in service of helping the client live in alignment with what matters most to them. The philosophy/vision/purpose onboarding framework is self-actualization operationalized as a daily coaching protocol.
+VIKTOR FRANKL — MEANING AS PRIMARY MOTIVATION:
+People can endure almost any circumstance if they have a reason why. Meaning is more fundamental than pleasure or power as a motivational force. Flow RX coaching is meaning-making work. The philosophy/vision/purpose onboarding framework is self-actualization operationalized as a daily coaching protocol. Every nudge, every intervention is in service of helping the client live in alignment with what matters most to them.
+
+---
 
 ## DOMAIN 6: HIGH PERFORMANCE MINDSET TRAINING — FINDING MASTERY & PRESENCE
 
-PRESENCE AS FIRST IDENTITY: Beneath all thought, all story, all self-concept, there is a field of pure awareness — witness consciousness. You are not your thoughts. You are the one noticing your thoughts. This is the first identity, before form and before story. When a client touches this, the spiral of self-criticism and overthinking loses its grip. The entry point: notice what is arising in awareness right now. Not to change it — just to notice it.
+PRESENCE AS FIRST IDENTITY:
+Beneath all thought, all story, all self-concept, there is a field of pure awareness — witness consciousness. You are not your thoughts. You are the one noticing your thoughts. This is the first identity, before form and before story. When a client can touch this — even briefly — the spiral of self-criticism, FOPO, and overthinking loses its grip.
+The entry point: notice what is arising in awareness right now. Not to change it — just to notice it. This single move — from being lost in thought to observing thought — is the foundation of every mental skill in high performance psychology.
 
-MICHAEL GERVAIS — SIX MENTAL SKILLS:
+MICHAEL GERVAIS — SIX MENTAL SKILLS (Finding Mastery):
 
-Calm: Regulated arousal, not absence of arousal. Yerkes-Dodson curve — performance peaks at moderate arousal. Find Your Five: 5 breath cycles, 5 seconds in, 5 out, 5 times. 10 Breaths in 3 Environments. Goal: make calm accessible on demand under pressure.
+CALM: Regulated arousal, not absence of arousal. Yerkes-Dodson curve — performance peaks at moderate arousal, too high causes anxiety, too low causes flatness. Find Your Five: 5 breath cycles, 5 seconds in, 5 seconds out, 5 times — done in any environment. 10 Breaths in 3 Environments: build calm as a portable skill, not a situational luxury. Goal: make calm accessible on demand under pressure.
 
-Confidence: Self-generated, not outcome-dependent. Built through EPIC Thought List (Evidence, Performance, Identity, Commitment). Three Minds framework: unconscious (instinct/training), conscious (deliberate thought), observing (metacognitive awareness). High performance requires trusting the unconscious — getting the conscious mind out of the way.
+CONFIDENCE: Self-generated, not outcome-dependent. Built through EPIC Thought List (Evidence, Performance, Identity, Commitment) — a personal inventory of proof that you are capable and prepared. Three Minds: unconscious (instinct/training), conscious (deliberate thought), observing (metacognitive awareness). High performance requires trusting the unconscious — getting the conscious mind out of the way.
 
-Focus and Presence: "Be where your feet are" — the most portable presence anchor. The body is always in the present. Redirect attention to physical sensation to ground awareness in now. Every return to the present is a rep in the mental training gym.
+FOCUS AND PRESENCE: "Be where your feet are" — the most portable presence anchor. The body is always in the present. When the mind wanders, redirect attention to physical sensation (feet on ground, breath in body) to ground awareness in now. Every return to the present is a rep in the mental training gym.
 
-Mindfulness and Single-Point Focus: Place full attention on one object, return when mind wanders. Locking in: fully committing attention to the present task — not forced, released into. Conditions: safety, challenge, identity alignment.
+MINDFULNESS AND LOCKING IN: Single-point focus — place full attention on one object, return when mind wanders. Locking in: fully committing attention to the present task with no reservation. Not forced — released into. Conditions for locking in: safety, challenge, identity alignment.
 
-Bounded Optimism: Trained expectation that challenges can be navigated and effort matters. 3 Good Things exercise: each evening write three things that went well and why. Trains brain to scan for competence rather than threat — counters negativity bias amplified in ADHD.
+BOUNDED OPTIMISM: Trained expectation that challenges can be navigated and effort matters. 3 Good Things exercise: each evening, write three things that went well and why. Trains the brain to scan for competence and progress rather than defaulting to threat detection.
 
-Stress as a Skill: Kelly McGonigal — stress is harmful only when you believe it is. Reframe activation as the body preparing for challenge. 3 R's: Recognize (name the stress response), Reframe (my body is helping me rise), Respond (choose from values, not react from threat).
+STRESS AS A SKILL: Kelly McGonigal — stress is harmful only when you believe it is harmful. Reframe activation as the body preparing for challenge. 3 R's: Recognize (name the stress response without judgment), Reframe (my body is helping me rise to this), Respond (choose from values, not react from threat).
 
-FOPO (Fear of People's Opinions): The evolved threat response to social exclusion. Shows up as holding back, performing for the audience rather than from values, chronic anxiety about judgment. Antidote: a clear stable personal philosophy — which the Flow RX onboarding builds. When you know who you are, external opinion loses its power to destabilize you.
+FOPO — FEAR OF PEOPLE'S OPINIONS:
+The evolved threat response to social exclusion. In modern performance contexts: holding back, performing for the audience rather than from values, chronic anxiety about judgment. The antidote is a clear, stable personal philosophy — which the Flow RX onboarding builds. When you know who you are and what you stand for, external opinion loses its power to destabilize you.
 
-BEING VS DOING: Western culture equates worth with productivity. Compete to Create (Gervais & Carroll): compete against your own potential, not against others. Show up to express your best self. The standard is internal — rooted in philosophy — not external. Pete Carroll returned to his philosophy after the Super Bowl loss — not his record, not his reputation. His philosophy.
+BEING VS DOING — THE WESTERN PERFORMANCE TRAP:
+Western culture equates worth with productivity. Compete to Create (Gervais & Carroll): compete against your own potential, not against others. Show up to express your best self. The standard is internal — rooted in philosophy — not external. Pete Carroll returned to his philosophy after the Super Bowl loss — not his record, not his reputation. His philosophy.
 
-THE WITNESS: You are not your thoughts, your diagnosis, your performance, or your history. You are the awareness in which all of these arise. For ADHD clients trapped in shame, for executives paralyzed by FOPO — touching this dimension of identity is the most liberating intervention available. The coaching pointer: "Notice what is noticing. Who is aware of the thought? Stay with that."
+THE WITNESS:
+You are not your thoughts, your diagnosis, your performance, or your history. You are the awareness in which all of these arise. For ADHD clients trapped in shame, for executives paralyzed by FOPO — touching this dimension of identity is the most liberating intervention available. The coaching pointer: "Notice what is noticing. Who is aware of the thought? Stay with that."
+
+---
+
+## COACHING VOICE RULES
+
+- 1-2 sentences max by default. If client asks for more detail, expand to 4-5 sentences.
+- Plain text only — no markdown, no asterisks, no bullet points, no formatting of any kind.
+- Always anchor to the client's own philosophy, vision, and purpose when available.
+- Coach from strength — challenges are growth edges, never deficits.
+- Draw only from the knowledge base above. Never give generic advice.
+- Warm, direct, specific — no hedging, no over-explaining.
+- Honor the compassion principle — normalize struggle, never shame.
+- Point toward meaning and presence, not just productivity.
+- When relevant, reference specific protocols by name (Morning Mindset Routine, Train Calm, Self-Compassion Break, Deep Work, Three Good Things) so clients learn the language of their own practice.
 `;
 
 async function getCoachingReply(message, client) {
@@ -196,17 +338,43 @@ ${KNOWLEDGE_BASE}
 ${clientContext}
 
 COACHING RULES:
-- Reply in 1-2 sentences max. Warm, direct, non-clinical. If the client explicitly asks for more detail or wants to go deeper, you may expand to 3-4 sentences.
+- Reply in 1-2 sentences max. Never longer unless client explicitly asks for more detail.
 - Plain text only — no markdown, no asterisks, no bullet points, no formatting of any kind.
 - Always anchor to the client's own philosophy, vision, and purpose when available.
 - Coach from strength — frame challenges as growth edges, never deficits.
 - Draw only from the knowledge base above. Never give generic advice.
 - Be warm, direct, and specific. No hedging, no over-explaining.
 - Honor the compassion principle — normalize struggle, never shame.
-- Point toward meaning and presence, not just productivity.`,
+- Point toward meaning and presence, not just productivity.
+- When relevant, reference specific protocol names (Morning Mindset Routine, Train Calm, Self-Compassion Break, Deep Work, Three Good Things) so clients learn the language of their practice.`,
     messages: [{ role: 'user', content: message }]
   });
 
+  return res.content[0].text;
+}
+
+async function generateNudge(client, practice) {
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 150,
+    system: `You are Flow RX, Dr. Brent Hogarth's ADHD performance coaching assistant.
+Generate a single daily nudge for a client. 2-3 sentences max. Plain text only — no markdown, no asterisks.
+
+The nudge must:
+1. Open with an Identity Anchor — a brief reference to their personal philosophy that reminds them who they are
+2. Follow with a specific, actionable Habit Prompt for their current practice drawn from Dr. Brent's clinical protocol
+3. Feel warm, direct, and energizing — not preachy
+
+${KNOWLEDGE_BASE}
+
+CLIENT PROFILE:
+Name: ${client.name}
+Philosophy: "${client.philosophy}"
+Vision: "${client.vision}"
+Purpose: "${client.purpose}"
+Current practice: "${practice}"`,
+    messages: [{ role: 'user', content: `Generate today's nudge for ${client.name}'s ${practice} practice.` }]
+  });
   return res.content[0].text;
 }
 
@@ -229,6 +397,52 @@ No markdown, no explanation, just the JSON array.`,
   }
 }
 
+// ── SCHEDULED NUDGES ──────────────────────────────────────────────────────
+// Runs every minute, checks if any client has a nudge due right now (Pacific time)
+cron.schedule('* * * * *', async () => {
+  try {
+    const now = new Date();
+    const pacificTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Vancouver' }));
+    const currentHour = String(pacificTime.getHours()).padStart(2, '0');
+    const currentMinute = String(pacificTime.getMinutes()).padStart(2, '0');
+    const currentTime = `${currentHour}:${currentMinute}`;
+
+    const result = await pool.query('SELECT * FROM clients WHERE onboarded = TRUE');
+    const clients = result.rows;
+
+    for (const client of clients) {
+      let schedules;
+      try {
+        schedules = JSON.parse(client.nudge_time);
+      } catch(e) {
+        continue;
+      }
+
+      for (const schedule of schedules) {
+        if (schedule.time === currentTime) {
+          const alreadySent = await pool.query(
+            `SELECT id FROM nudge_log WHERE phone = $1 AND practice = $2 AND sent_at::date = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Vancouver')::date`,
+            [client.phone, schedule.practice]
+          );
+
+          if (alreadySent.rows.length === 0) {
+            const nudge = await generateNudge(client, schedule.practice);
+            await sendSMS(client.phone, nudge);
+            await pool.query(
+              'INSERT INTO nudge_log (phone, practice, body) VALUES ($1, $2, $3)',
+              [client.phone, schedule.practice, nudge]
+            );
+            console.log(`Nudge sent to ${client.name} for ${schedule.practice} at ${currentTime}`);
+          }
+        }
+      }
+    }
+  } catch(err) {
+    console.error('Cron error:', err.message);
+  }
+});
+
+// ── ROUTES ────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => res.send('Flow RX server is running'));
 
 app.post('/send', async (req, res) => {
@@ -342,6 +556,11 @@ app.get('/schedules', async (req, res) => {
   const result = await pool.query(
     'SELECT phone, name, philosophy, vision, purpose, practice, nudge_time FROM clients WHERE onboarded = TRUE'
   );
+  res.json(result.rows);
+});
+
+app.get('/nudge-log', async (req, res) => {
+  const result = await pool.query('SELECT * FROM nudge_log ORDER BY sent_at DESC LIMIT 50');
   res.json(result.rows);
 });
 
