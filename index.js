@@ -110,4 +110,157 @@ Never give generic advice. Always anchor to the client's own philosophy and visi
 }
 
 // Parse nudge schedule from client's free-text answer
-async function parseNudgeSchedule(practiceText,
+async function parseNudgeSchedule(practiceText, nudgeTimeText) {
+  const res = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 200,
+    system: `Extract practice/time pairs from a client's nudge schedule answer. 
+Return ONLY a JSON array. Each item has "practice" and "time" (24hr format HH:MM, Pacific time).
+Example: [{"practice":"morning mindset","time":"08:00"},{"practice":"deep work","time":"12:00"}]
+If only one time is given, use the practice from their practice answer.
+No markdown, no explanation, just the JSON array.`,
+    messages: [{ role: 'user', content: `Practice: ${practiceText}\nSchedule answer: ${nudgeTimeText}` }]
+  });
+  try {
+    const text = res.content[0].text.replace(/```json|```/g, '').trim();
+    return JSON.parse(text);
+  } catch(e) {
+    return [{ practice: practiceText, time: '08:00' }];
+  }
+}
+
+// Health check
+app.get('/', (req, res) => res.send('Flow RX server is running'));
+
+// Send nudge (from dashboard)
+app.post('/send', async (req, res) => {
+  const { to, message } = req.body;
+  try {
+    await sendSMS(to, message);
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Incoming SMS handler
+app.post('/incoming', async (req, res) => {
+  const from = req.body.From;
+  const body = req.body.Body?.trim();
+
+  // Log inbound
+  await pool.query(
+    'INSERT INTO messages (phone, direction, body) VALUES ($1, $2, $3)',
+    [from, 'inbound', body]
+  );
+
+  // Get or create client
+  let result = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+  let client = result.rows[0];
+
+  if (!client) {
+    await pool.query('INSERT INTO clients (phone, onboarding_step) VALUES ($1, 0)', [from]);
+    result = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+    client = result.rows[0];
+  }
+
+  res.set('Content-Type', 'text/xml');
+  res.send('<Response></Response>');
+
+  // Onboarding flow
+  if (!client.onboarded) {
+    const step = client.onboarding_step;
+
+    if (step < ONBOARDING_KEYS.length) {
+      // Save the answer to the previous step
+      if (step > 0) {
+        const key = ONBOARDING_KEYS[step - 1];
+        await pool.query(`UPDATE clients SET ${key} = $1 WHERE phone = $2`, [body, from]);
+      }
+
+      // Send next question (personalize step 1 with name if available)
+      let question = ONBOARDING[step];
+      if (step === 1) {
+        const updated = await pool.query('SELECT name FROM clients WHERE phone = $1', [from]);
+        question = question.replace('{name}', updated.rows[0]?.name || 'friend');
+      }
+
+      await pool.query('UPDATE clients SET onboarding_step = $1 WHERE phone = $2', [step + 1, from]);
+      await sendSMS(from, question);
+
+    } else {
+      // Save raw nudge time answer
+      await pool.query('UPDATE clients SET nudge_time = $1 WHERE phone = $2', [body, from]);
+
+      // Fetch full client data
+      const raw = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+      const r = raw.rows[0];
+
+      // Condense answers with AI — preserve good answers, only clean up rambling ones
+      const condenseRes = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
+        system: `You are a performance coach reviewing client onboarding answers.
+Your job is to preserve great answers exactly as written, and only condense answers that are rambling, unclear, or overly long.
+
+Rules:
+- If an answer is already clear, punchy, and under 2 sentences — keep it word for word.
+- Only rewrite if the answer is rambling, repetitive, or longer than 2-3 sentences.
+- Never add words, reframe meaning, or make it sound different if it doesn't need it.
+- First person only. No markdown. No asterisks.
+- Return ONLY a JSON object with keys: philosophy, vision, purpose, practice.`,
+        messages: [{ role: 'user', content: `Philosophy: ${r.philosophy}\nVision: ${r.vision}\nPurpose: ${r.purpose}\nPractice: ${r.practice}` }]
+      });
+
+      let condensed;
+      try {
+        const text = condenseRes.content[0].text.replace(/```json|```/g, '').trim();
+        condensed = JSON.parse(text);
+      } catch(e) {
+        condensed = { philosophy: r.philosophy, vision: r.vision, purpose: r.purpose, practice: r.practice };
+      }
+
+      // Parse nudge schedule into structured JSON
+      const schedule = await parseNudgeSchedule(condensed.practice, body);
+      const scheduleJSON = JSON.stringify(schedule);
+
+      // Save everything cleaned and finalized
+      await pool.query(
+        'UPDATE clients SET philosophy = $1, vision = $2, purpose = $3, practice = $4, nudge_time = $5, onboarded = TRUE WHERE phone = $6',
+        [condensed.philosophy, condensed.vision, condensed.purpose, condensed.practice, scheduleJSON, from]
+      );
+
+      const updated = await pool.query('SELECT * FROM clients WHERE phone = $1', [from]);
+      await sendSMS(from, confirmationMessage(updated.rows[0]));
+    }
+
+  } else {
+    // Fully onboarded — AI coaching reply
+    const reply = await getCoachingReply(body, client);
+    await sendSMS(from, reply);
+  }
+});
+
+// Get all clients (for dashboard)
+app.get('/clients', async (req, res) => {
+  const result = await pool.query('SELECT * FROM clients ORDER BY created_at DESC');
+  res.json(result.rows);
+});
+
+// Get messages for a client (for dashboard)
+app.get('/messages/:phone', async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM messages WHERE phone = $1 ORDER BY created_at ASC',
+    [decodeURIComponent(req.params.phone)]
+  );
+  res.json(result.rows);
+});
+
+// Get nudge schedules (for cron — returns all onboarded clients with their schedule)
+app.get('/schedules', async (req, res) => {
+  const result = await pool.query('SELECT phone, name, philosophy, vision, purpose, practice, nudge_time FROM clients WHERE onboarded = TRUE');
+  res.json(result.rows);
+});
+
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`Flow RX running on port ${PORT}`));
